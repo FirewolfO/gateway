@@ -1,0 +1,41 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	Address               string
+	AdminURL              string
+	SigningSecret         string
+	ConfigRefreshInterval time.Duration
+	SignatureSkew         time.Duration
+}
+
+func Load() Config {
+	return Config{
+		Address:               env("GATEWAY_ADDR", ":8082"),
+		AdminURL:              strings.TrimRight(env("GATEWAY_ADMIN_URL", "http://127.0.0.1:8083"), "/"),
+		SigningSecret:         env("GATEWAY_SIGNING_SECRET", "local-development-signing-secret-change-me"),
+		ConfigRefreshInterval: time.Duration(envInt("GATEWAY_CONFIG_REFRESH_SECONDS", 5)) * time.Second,
+		SignatureSkew:         time.Duration(envInt("GATEWAY_SIGNATURE_SKEW_SECONDS", 300)) * time.Second,
+	}
+}
+
+func env(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
