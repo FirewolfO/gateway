@@ -10,7 +10,7 @@ import (
 type Config struct {
 	Address               string
 	AdminURL              string
-	SigningSecret         string
+	RuntimeToken          string
 	ConfigRefreshInterval time.Duration
 	SignatureSkew         time.Duration
 }
@@ -19,7 +19,7 @@ func Load() Config {
 	return Config{
 		Address:               env("GATEWAY_ADDR", ":8082"),
 		AdminURL:              strings.TrimRight(env("GATEWAY_ADMIN_URL", "http://127.0.0.1:8083"), "/"),
-		SigningSecret:         env("GATEWAY_SIGNING_SECRET", "local-development-signing-secret-change-me"),
+		RuntimeToken:          env("GATEWAY_RUNTIME_TOKEN", "local-development-runtime-token-change-me"),
 		ConfigRefreshInterval: time.Duration(envInt("GATEWAY_CONFIG_REFRESH_SECONDS", 5)) * time.Second,
 		SignatureSkew:         time.Duration(envInt("GATEWAY_SIGNATURE_SKEW_SECONDS", 300)) * time.Second,
 	}

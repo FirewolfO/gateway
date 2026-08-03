@@ -3,8 +3,16 @@ package model
 import "time"
 
 type RuntimeConfig struct {
-	GeneratedAt time.Time        `json:"generatedAt"`
-	Services    []RuntimeService `json:"services"`
+	GeneratedAt time.Time           `json:"generatedAt"`
+	Services    []RuntimeService    `json:"services"`
+	Credentials []RuntimeCredential `json:"credentials"`
+}
+
+type RuntimeCredential struct {
+	ID                uint   `json:"id"`
+	CallerServiceCode string `json:"callerServiceCode"`
+	AccessKey         string `json:"accessKey"`
+	SecretKey         string `json:"secretKey"`
 }
 
 type RuntimeService struct {

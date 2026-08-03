@@ -16,6 +16,7 @@ import (
 
 type Provider struct {
 	adminURL        string
+	runtimeToken    string
 	refreshInterval time.Duration
 	client          *http.Client
 	snapshot        atomic.Pointer[model.RuntimeConfig]
@@ -27,9 +28,10 @@ type envelope struct {
 	Data    model.RuntimeConfig `json:"data"`
 }
 
-func NewProvider(adminURL string, refreshInterval time.Duration) *Provider {
+func NewProvider(adminURL, runtimeToken string, refreshInterval time.Duration) *Provider {
 	return &Provider{
 		adminURL:        strings.TrimRight(adminURL, "/"),
+		runtimeToken:    runtimeToken,
 		refreshInterval: refreshInterval,
 		client:          &http.Client{Timeout: 5 * time.Second},
 	}
@@ -40,6 +42,7 @@ func (p *Provider) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	request.Header.Set("Authorization", "Bearer "+p.runtimeToken)
 	response, err := p.client.Do(request)
 	if err != nil {
 		return err
@@ -100,6 +103,19 @@ func validateConfig(config *model.RuntimeConfig) error {
 			if !strings.HasPrefix(route.Path, "/") || !strings.HasPrefix(route.UpstreamPath, "/") || len(route.Methods) == 0 {
 				return fmt.Errorf("runtime config contains invalid route %d", route.ID)
 			}
+		}
+	}
+	seenCredentials := make(map[string]struct{}, len(config.Credentials))
+	for _, credential := range config.Credentials {
+		if strings.TrimSpace(credential.AccessKey) == "" || len(credential.AccessKey) > 64 || len(credential.SecretKey) < 32 {
+			return fmt.Errorf("runtime config contains invalid credential %d", credential.ID)
+		}
+		if _, exists := seenCredentials[credential.AccessKey]; exists {
+			return fmt.Errorf("runtime config contains duplicate access key %q", credential.AccessKey)
+		}
+		seenCredentials[credential.AccessKey] = struct{}{}
+		if _, exists := seenServices[credential.CallerServiceCode]; !exists {
+			return fmt.Errorf("runtime credential %d references unknown caller service %q", credential.ID, credential.CallerServiceCode)
 		}
 	}
 	return nil

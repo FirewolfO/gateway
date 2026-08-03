@@ -15,13 +15,16 @@ import (
 
 func main() {
 	cfg := config.Load()
-	provider := runtime.NewProvider(cfg.AdminURL, cfg.ConfigRefreshInterval)
+	if len(cfg.RuntimeToken) < 32 {
+		log.Fatal("GATEWAY_RUNTIME_TOKEN 至少需要 32 个字符")
+	}
+	provider := runtime.NewProvider(cfg.AdminURL, cfg.RuntimeToken, cfg.ConfigRefreshInterval)
 	if err := refreshWithRetry(provider); err != nil {
 		log.Printf("首次加载路由配置失败，将在后台继续重试: %v", err)
 	}
 	go provider.Start(context.Background())
 
-	verifier, err := security.NewVerifier(cfg.SigningSecret, cfg.SignatureSkew)
+	verifier, err := security.NewVerifier(cfg.SignatureSkew)
 	if err != nil {
 		log.Fatalf("初始化验签器失败: %v", err)
 	}

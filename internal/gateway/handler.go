@@ -64,13 +64,20 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 		writeError(c, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "请求体不能超过 10 MiB")
 		return
 	}
+	config, available := h.provider.Snapshot()
+	if !available {
+		writeError(c, http.StatusServiceUnavailable, "CONFIG_UNAVAILABLE", "路由配置暂不可用")
+		return
+	}
 	credential := string(c.Request.Header.Peek(security.CredentialHeader))
 	signature := string(c.Request.Header.Peek(security.SignatureHeader))
-	if credential != serviceCode {
+	callerCredential, found := findCredential(config, credential)
+	if !found {
 		writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
 		return
 	}
 	err := h.verifier.Verify(
+		callerCredential.SecretKey,
 		credential,
 		string(c.Method()),
 		requestPath,
@@ -86,11 +93,6 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	config, available := h.provider.Snapshot()
-	if !available {
-		writeError(c, http.StatusServiceUnavailable, "CONFIG_UNAVAILABLE", "路由配置暂不可用")
-		return
-	}
 	routePath := strings.TrimPrefix(requestPath, "/api/"+serviceCode)
 	if routePath == "" {
 		routePath = "/"
@@ -105,12 +107,12 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 		writeError(c, http.StatusNotFound, "ROUTE_NOT_FOUND", "路由不存在")
 		return
 	}
-	if err := h.forward(ctx, c, matched, body, rawQuery); err != nil {
+	if err := h.forward(ctx, c, matched, callerCredential.CallerServiceCode, body, rawQuery); err != nil {
 		writeError(c, http.StatusBadGateway, "UPSTREAM_ERROR", "上游服务请求失败")
 	}
 }
 
-func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched routeMatch, body []byte, rawQuery string) error {
+func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched routeMatch, callerServiceCode string, body []byte, rawQuery string) error {
 	target, err := buildTargetURL(matched.service.BaseURL, matched.route.UpstreamPath, matched.params, rawQuery)
 	if err != nil {
 		return err
@@ -132,6 +134,7 @@ func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched ro
 	})
 	request.Header.Set("X-Forwarded-Host", string(c.Host()))
 	request.Header.Set("X-Forwarded-For", c.ClientIP())
+	request.Header.Set("X-Gateway-Caller-Service", callerServiceCode)
 	request.Header.Set("X-Gateway-Service", matched.service.Code)
 	request.Header.Set("X-Gateway-Route", fmt.Sprintf("%d", matched.route.ID))
 
@@ -157,6 +160,15 @@ func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched ro
 	c.Response.SetStatusCode(response.StatusCode)
 	c.Response.SetBody(responseBody)
 	return nil
+}
+
+func findCredential(config *model.RuntimeConfig, accessKey string) (model.RuntimeCredential, bool) {
+	for _, credential := range config.Credentials {
+		if credential.AccessKey == accessKey {
+			return credential, true
+		}
+	}
+	return model.RuntimeCredential{}, false
 }
 
 func matchRoute(config *model.RuntimeConfig, serviceCode, method, requestPath string) (routeMatch, bool) {

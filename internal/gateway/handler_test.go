@@ -13,7 +13,17 @@ func TestMatchRouteByServiceMethodPathAndPriority(t *testing.T) {
 			{ID: 1, Path: "/orders/:id", UpstreamPath: "/internal/orders/:id", Methods: []string{"GET"}, Priority: 100},
 			{ID: 2, Path: "/orders/special", UpstreamPath: "/internal/special", Methods: []string{"GET"}, Priority: 200},
 		},
+	}}, Credentials: []model.RuntimeCredential{{
+		ID: 9, CallerServiceCode: "billing", AccessKey: "gwak_billing", SecretKey: "0123456789abcdef0123456789abcdef",
 	}}}
+
+	credential, ok := findCredential(config, "gwak_billing")
+	if !ok || credential.CallerServiceCode != "billing" {
+		t.Fatalf("findCredential() = %#v, %v", credential, ok)
+	}
+	if _, ok := findCredential(config, "orders"); ok {
+		t.Fatal("target service code unexpectedly matched an access key")
+	}
 
 	matched, ok := matchRoute(config, "orders", "GET", "/orders/special")
 	if !ok || matched.route.ID != 2 {

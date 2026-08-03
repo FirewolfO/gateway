@@ -30,22 +30,21 @@ var (
 )
 
 type Verifier struct {
-	secret []byte
 	skew   time.Duration
 	mu     sync.Mutex
 	nonces map[string]time.Time
 	now    func() time.Time
 }
 
-func NewVerifier(secret string, skew time.Duration) (*Verifier, error) {
-	if len(secret) < 32 {
-		return nil, errors.New("GATEWAY_SIGNING_SECRET 至少需要 32 个字符")
+func NewVerifier(skew time.Duration) (*Verifier, error) {
+	if skew <= 0 {
+		return nil, errors.New("签名有效时间必须大于 0")
 	}
-	return &Verifier{secret: []byte(secret), skew: skew, nonces: make(map[string]time.Time), now: time.Now}, nil
+	return &Verifier{skew: skew, nonces: make(map[string]time.Time), now: time.Now}, nil
 }
 
-func (v *Verifier) Verify(credential, method, path, rawQuery string, body []byte, timestamp, nonce, payloadHash, signature string) error {
-	if credential == "" || len(credential) > 64 || len(nonce) < 16 || len(nonce) > 128 {
+func (v *Verifier) Verify(secret, credential, method, path, rawQuery string, body []byte, timestamp, nonce, payloadHash, signature string) error {
+	if len(secret) < 32 || credential == "" || len(credential) > 64 || len(nonce) < 16 || len(nonce) > 128 {
 		return ErrInvalidSignature
 	}
 	seconds, err := strconv.ParseInt(timestamp, 10, 64)
@@ -65,7 +64,7 @@ func (v *Verifier) Verify(credential, method, path, rawQuery string, body []byte
 	if err != nil {
 		return ErrInvalidSignature
 	}
-	expected := Sign(string(v.secret), canonical)
+	expected := Sign(secret, canonical)
 	if len(signature) != len(expected) || subtle.ConstantTimeCompare([]byte(strings.ToLower(signature)), []byte(expected)) != 1 {
 		return ErrInvalidSignature
 	}

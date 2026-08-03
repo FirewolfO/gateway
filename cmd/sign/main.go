@@ -15,15 +15,15 @@ import (
 )
 
 func main() {
-	service := flag.String("service", "", "service code used in /api/{service}/{path}")
+	accessKey := flag.String("access-key", os.Getenv("GATEWAY_ACCESS_KEY"), "caller service access key")
 	method := flag.String("method", "GET", "HTTP method")
 	target := flag.String("url", "", "full request URL or path")
 	body := flag.String("body", "", "raw request body")
-	secret := flag.String("secret", os.Getenv("GATEWAY_SIGNING_SECRET"), "shared signing secret")
+	secretKey := flag.String("secret-key", os.Getenv("GATEWAY_SECRET_KEY"), "caller service secret key")
 	flag.Parse()
 
-	if *service == "" || *target == "" || len(*secret) < 32 {
-		log.Fatal("service, url and a signing secret of at least 32 characters are required")
+	if *accessKey == "" || *target == "" || len(*secretKey) < 32 {
+		log.Fatal("access-key, url and a secret-key of at least 32 characters are required")
 	}
 	parsed, err := url.Parse(*target)
 	if err != nil {
@@ -40,9 +40,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("build canonical request: %v", err)
 	}
-	signature := security.Sign(*secret, canonical)
+	signature := security.Sign(*secretKey, canonical)
 
-	fmt.Printf("%s: %s\n", security.CredentialHeader, *service)
+	fmt.Printf("%s: %s\n", security.CredentialHeader, *accessKey)
 	fmt.Printf("%s: %s\n", security.SignatureHeader, signature)
 	fmt.Printf("%s: %s\n", security.TimestampHeader, timestamp)
 	fmt.Printf("%s: %s\n", security.NonceHeader, nonce)
