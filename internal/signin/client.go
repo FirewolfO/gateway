@@ -17,8 +17,7 @@ import (
 )
 
 var (
-	ErrUnauthorized              = errors.New("signin session or credential is invalid")
-	ErrProgrammingAccessDisabled = errors.New("programming access is disabled")
+	ErrUnauthorized = errors.New("signin session or credential is invalid")
 )
 
 type Client struct {
@@ -93,12 +92,7 @@ func (c *Client) request(ctx context.Context, path string, body []byte, cookie s
 			return model.OpenCredential{}, errors.New("signin returned an invalid credential")
 		}
 		return result.Data, nil
-	case http.StatusForbidden:
-		if result.Code == "PROGRAMMING_ACCESS_DISABLED" {
-			return model.OpenCredential{}, ErrProgrammingAccessDisabled
-		}
-		return model.OpenCredential{}, ErrUnauthorized
-	case http.StatusUnauthorized, http.StatusNotFound:
+	case http.StatusForbidden, http.StatusUnauthorized, http.StatusNotFound:
 		return model.OpenCredential{}, ErrUnauthorized
 	default:
 		return model.OpenCredential{}, fmt.Errorf("signin returned status %d", response.StatusCode)

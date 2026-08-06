@@ -8,11 +8,15 @@ import (
 
 func TestMatchRouteByServiceMethodPathAndPriority(t *testing.T) {
 	config := &model.RuntimeConfig{Services: []model.RuntimeService{{
-		Code: "orders", BaseURL: "http://orders.internal", TimeoutMS: 5000,
+		Code: "orders", Audience: "inner", BaseURL: "http://orders.internal", TimeoutMS: 5000,
 		Routes: []model.RuntimeRoute{
 			{ID: 1, Path: "/orders/:id", UpstreamPath: "/internal/orders/:id", Methods: []string{"GET"}, Audience: "inner", AllowedCallerServiceCodes: []string{"billing"}, Priority: 100},
 			{ID: 2, Path: "/orders/special", UpstreamPath: "/internal/special", Methods: []string{"GET"}, Audience: "inner", AllowedCallerServiceCodes: []string{"billing"}, Priority: 200},
-			{ID: 3, Path: "/orders/:id", UpstreamPath: "/public/orders/:id", Methods: []string{"GET"}, Audience: "open", Priority: 100},
+		},
+	}, {
+		Code: "orders", Audience: "open", BaseURL: "http://orders-open.internal", TimeoutMS: 5000,
+		Routes: []model.RuntimeRoute{
+			{ID: 3, Path: "/orders/:id", UpstreamPath: "/public/orders/:id", Methods: []string{"GET"}, Audience: "open", ProgrammingAccessEnabled: true, Priority: 100},
 		},
 	}}, Credentials: []model.RuntimeCredential{{
 		ID: 9, CallerServiceCode: "billing", AccessKey: "gwak_billing", SecretKey: "0123456789abcdef0123456789abcdef",
@@ -38,7 +42,7 @@ func TestMatchRouteByServiceMethodPathAndPriority(t *testing.T) {
 		t.Fatal("inner route service authorization was not enforced")
 	}
 	openMatched, ok := matchRoute(config, "open", "orders", "GET", "/orders/42")
-	if !ok || openMatched.route.ID != 3 {
+	if !ok || openMatched.route.ID != 3 || !openMatched.route.ProgrammingAccessEnabled {
 		t.Fatalf("open route isolation = %#v, %v", openMatched, ok)
 	}
 	if _, ok := matchRoute(config, "inner", "orders", "POST", "/orders/42"); ok {

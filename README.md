@@ -27,7 +27,7 @@ go run ./cmd/server
 GET /api/inner/orders/orders/42
 ```
 
-`audience` 只能是 `inner` 或 `open`。Gateway 使用匹配到的同受众 `upstreamPath` 替换路径参数，保留原始查询参数，并将请求转发到服务的 `baseUrl`。
+`audience` 只能是 `inner` 或 `open`。服务和路由配置按受众完全隔离，同一服务编码可在两个受众中指向不同上游。Gateway 使用当前受众匹配到的 `upstreamPath` 替换路径参数，保留原始查询参数，并将请求转发到服务的 `baseUrl`。
 
 ## 请求签名
 
@@ -41,7 +41,7 @@ X-Gateway-Nonce: <at_least_16_characters>
 X-Gateway-Content-SHA256: <lowercase_hex_sha256_of_body>
 ```
 
-Inner 请求的 `X-Gateway-Credential` 填调用方服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，匹配路由后还会确认该调用方服务已获得接口授权。Open 编程请求使用用户 AK/SK；只有账号已开启“编程访问”时 Sign-in 才允许 Gateway 解析该 AK。浏览器 Open 请求不携带签名，Gateway 使用自身服务 AK/SK 调用 Sign-in Inner 接口，把 `CLOUD_SESSION` 换成短期 AK/SK 后完成同一签名校验。
+Inner 请求的 `X-Gateway-Credential` 填调用方 Inner 服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，匹配路由后还会确认该调用方服务已获得接口授权。Open 编程请求使用用户 AK/SK，只有匹配的 OpenAPI 路由已开启“编程访问”时才会放行；该开关默认关闭。浏览器 Open 请求不携带签名，不受编程访问开关影响，Gateway 使用自身服务 AK/SK 调用 Sign-in Inner 接口，把 `CLOUD_SESSION` 换成短期 AK/SK 后完成同一签名校验。
 
 签名使用专用请求头，不占用标准 `Authorization`。规范请求由六行组成，末尾不附加换行：
 

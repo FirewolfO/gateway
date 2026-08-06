@@ -87,14 +87,22 @@ func (p *Provider) Snapshot() (*model.RuntimeConfig, bool) {
 
 func validateConfig(config *model.RuntimeConfig) error {
 	seenServices := make(map[string]struct{}, len(config.Services))
+	innerServices := make(map[string]struct{}, len(config.Services))
 	for _, service := range config.Services {
 		if strings.TrimSpace(service.Code) == "" {
 			return errors.New("runtime config contains an empty service code")
 		}
-		if _, exists := seenServices[service.Code]; exists {
-			return fmt.Errorf("runtime config contains duplicate service %q", service.Code)
+		if service.Audience != "inner" && service.Audience != "open" {
+			return fmt.Errorf("runtime config contains invalid audience for service %q", service.Code)
 		}
-		seenServices[service.Code] = struct{}{}
+		serviceKey := service.Audience + ":" + service.Code
+		if _, exists := seenServices[serviceKey]; exists {
+			return fmt.Errorf("runtime config contains duplicate service %q", serviceKey)
+		}
+		seenServices[serviceKey] = struct{}{}
+		if service.Audience == "inner" {
+			innerServices[service.Code] = struct{}{}
+		}
 		parsed, err := url.ParseRequestURI(service.BaseURL)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return fmt.Errorf("runtime config contains invalid upstream URL for %q", service.Code)
@@ -106,11 +114,17 @@ func validateConfig(config *model.RuntimeConfig) error {
 			if route.Audience != "inner" && route.Audience != "open" {
 				return fmt.Errorf("runtime config contains invalid audience for route %d", route.ID)
 			}
+			if route.Audience != service.Audience {
+				return fmt.Errorf("runtime route %d crosses service audience", route.ID)
+			}
 			if route.Audience == "inner" && len(route.AllowedCallerServiceCodes) == 0 {
 				return fmt.Errorf("runtime config contains an unauthorized inner route %d", route.ID)
 			}
 			if route.Audience == "open" && len(route.AllowedCallerServiceCodes) != 0 {
 				return fmt.Errorf("runtime config contains service grants on open route %d", route.ID)
+			}
+			if route.Audience == "inner" && route.ProgrammingAccessEnabled {
+				return fmt.Errorf("runtime config enables programming access on inner route %d", route.ID)
 			}
 		}
 	}
@@ -123,7 +137,7 @@ func validateConfig(config *model.RuntimeConfig) error {
 			return fmt.Errorf("runtime config contains duplicate access key %q", credential.AccessKey)
 		}
 		seenCredentials[credential.AccessKey] = struct{}{}
-		if _, exists := seenServices[credential.CallerServiceCode]; !exists {
+		if _, exists := innerServices[credential.CallerServiceCode]; !exists {
 			return fmt.Errorf("runtime credential %d references unknown caller service %q", credential.ID, credential.CallerServiceCode)
 		}
 	}

@@ -18,6 +18,7 @@ type RuntimeCredential struct {
 type RuntimeService struct {
 	ID        uint           `json:"id"`
 	Code      string         `json:"code"`
+	Audience  string         `json:"audience"`
 	Name      string         `json:"name"`
 	BaseURL   string         `json:"baseUrl"`
 	TimeoutMS int            `json:"timeoutMs"`
@@ -31,6 +32,7 @@ type RuntimeRoute struct {
 	UpstreamPath              string   `json:"upstreamPath"`
 	Methods                   []string `json:"methods"`
 	Audience                  string   `json:"audience"`
+	ProgrammingAccessEnabled  bool     `json:"programmingAccessEnabled"`
 	AllowedCallerServiceCodes []string `json:"allowedCallerServiceCodes"`
 	Priority                  int      `json:"priority"`
 	TimeoutMS                 int      `json:"timeoutMs"`

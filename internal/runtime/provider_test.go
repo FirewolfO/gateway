@@ -17,7 +17,7 @@ func TestProviderRefresh(t *testing.T) {
 			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":"OK","message":"操作成功","data":{"generatedAt":"2026-08-03T00:00:00Z","services":[{"id":1,"code":"orders","name":"订单","baseUrl":"http://orders.internal","timeoutMs":5000,"routes":[{"id":3,"name":"内部查询","path":"/orders/:id","upstreamPath":"/orders/:id","methods":["GET"],"audience":"inner","allowedCallerServiceCodes":["orders"],"priority":100,"timeoutMs":5000}]}],"credentials":[{"id":2,"callerServiceCode":"orders","accessKey":"gwak_example","secretKey":"0123456789abcdef0123456789abcdef"}]}}`))
+		_, _ = w.Write([]byte(`{"code":"OK","message":"操作成功","data":{"generatedAt":"2026-08-03T00:00:00Z","services":[{"id":1,"code":"orders","audience":"inner","name":"订单","baseUrl":"http://orders.internal","timeoutMs":5000,"routes":[{"id":3,"name":"内部查询","path":"/orders/:id","upstreamPath":"/orders/:id","methods":["GET"],"audience":"inner","programmingAccessEnabled":false,"allowedCallerServiceCodes":["orders"],"priority":100,"timeoutMs":5000}]},{"id":2,"code":"orders","audience":"open","name":"订单 OpenAPI","baseUrl":"http://orders.internal","timeoutMs":5000,"routes":[{"id":4,"name":"公开查询","path":"/orders/:id","upstreamPath":"/orders/:id","methods":["GET"],"audience":"open","programmingAccessEnabled":true,"allowedCallerServiceCodes":[],"priority":100,"timeoutMs":5000}]}],"credentials":[{"id":2,"callerServiceCode":"orders","accessKey":"gwak_example","secretKey":"0123456789abcdef0123456789abcdef"}]}}`))
 	}))
 	defer server.Close()
 
@@ -26,7 +26,7 @@ func TestProviderRefresh(t *testing.T) {
 		t.Fatalf("Refresh() error = %v", err)
 	}
 	config, ok := provider.Snapshot()
-	if !ok || len(config.Services) != 1 || config.Services[0].Code != "orders" || len(config.Credentials) != 1 {
+	if !ok || len(config.Services) != 2 || config.Services[0].Code != "orders" || config.Services[1].Audience != "open" || len(config.Credentials) != 1 {
 		t.Fatalf("Snapshot() = %#v, %v", config, ok)
 	}
 }

@@ -47,16 +47,16 @@ func TestClientSignsResolveAndExchangeRequests(t *testing.T) {
 	}
 }
 
-func TestClientReportsProgrammingAccessDisabled(t *testing.T) {
+func TestClientTreatsRejectedCredentialAsUnauthorized(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"code":"PROGRAMMING_ACCESS_DISABLED","message":"账号尚未开启编程访问"}`))
+		_, _ = w.Write([]byte(`{"code":"FORBIDDEN","message":"凭据不可用"}`))
 	}))
 	defer server.Close()
 
 	client := NewClient(server.URL, "gwak_gateway", "0123456789abcdef0123456789abcdef")
-	if _, err := client.Resolve(context.Background(), "uak_example"); err != ErrProgrammingAccessDisabled {
+	if _, err := client.Resolve(context.Background(), "uak_example"); err != ErrUnauthorized {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 }

@@ -114,6 +114,10 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 		writeError(c, http.StatusForbidden, "SERVICE_NOT_AUTHORIZED", "调用方服务未获该接口授权")
 		return
 	}
+	if audience == "open" && identity.authType == "programmatic" && !matched.route.ProgrammingAccessEnabled {
+		writeError(c, http.StatusForbidden, "PROGRAMMING_ACCESS_DISABLED", "该 OpenAPI 尚未开启编程访问")
+		return
+	}
 	if err := h.forward(ctx, c, matched, identity, body, rawQuery); err != nil {
 		writeError(c, http.StatusBadGateway, "UPSTREAM_ERROR", "上游服务请求失败")
 	}
@@ -135,10 +139,6 @@ func (h *Handler) authenticate(ctx context.Context, c *app.RequestContext, audie
 	}
 	if credential != "" {
 		userCredential, err := h.resolver.Resolve(ctx, credential)
-		if errors.Is(err, signin.ErrProgrammingAccessDisabled) {
-			writeError(c, http.StatusForbidden, "PROGRAMMING_ACCESS_DISABLED", "账号尚未开启编程访问")
-			return callerIdentity{}, false
-		}
 		if errors.Is(err, signin.ErrUnauthorized) {
 			writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
 			return callerIdentity{}, false
@@ -280,7 +280,7 @@ func findCredential(config *model.RuntimeConfig, accessKey string) (model.Runtim
 func matchRoute(config *model.RuntimeConfig, audience, serviceCode, method, requestPath string) (routeMatch, bool) {
 	method = strings.ToUpper(method)
 	for _, service := range config.Services {
-		if service.Code != serviceCode {
+		if service.Code != serviceCode || service.Audience != audience {
 			continue
 		}
 		var best routeMatch
