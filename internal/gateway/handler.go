@@ -3,6 +3,9 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +16,7 @@ import (
 	"gateway/internal/model"
 	"gateway/internal/runtime"
 	"gateway/internal/security"
+	"gateway/internal/signin"
 
 	"github.com/cloudwego/hertz/pkg/app"
 )
@@ -25,7 +29,13 @@ const (
 type Handler struct {
 	provider *runtime.Provider
 	verifier *security.Verifier
+	resolver OpenCredentialResolver
 	client   *http.Client
+}
+
+type OpenCredentialResolver interface {
+	Resolve(context.Context, string) (model.OpenCredential, error)
+	Exchange(context.Context, string) (model.OpenCredential, error)
 }
 
 type routeMatch struct {
@@ -34,15 +44,22 @@ type routeMatch struct {
 	params  map[string]string
 }
 
+type callerIdentity struct {
+	serviceCode string
+	userID      string
+	authType    string
+}
+
 type errorResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
-func New(provider *runtime.Provider, verifier *security.Verifier) *Handler {
+func New(provider *runtime.Provider, verifier *security.Verifier, resolver OpenCredentialResolver) *Handler {
 	return &Handler{
 		provider: provider,
 		verifier: verifier,
+		resolver: resolver,
 		client: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -56,6 +73,11 @@ func New(provider *runtime.Provider, verifier *security.Verifier) *Handler {
 }
 
 func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
+	audience := strings.ToLower(c.Param("audience"))
+	if audience != "inner" && audience != "open" {
+		writeError(c, http.StatusNotFound, "ROUTE_NOT_FOUND", "路由不存在")
+		return
+	}
 	serviceCode := c.Param("service")
 	requestPath := string(c.Request.URI().PathOriginal())
 	rawQuery := string(c.Request.URI().QueryString())
@@ -69,31 +91,12 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 		writeError(c, http.StatusServiceUnavailable, "CONFIG_UNAVAILABLE", "路由配置暂不可用")
 		return
 	}
-	credential := string(c.Request.Header.Peek(security.CredentialHeader))
-	signature := string(c.Request.Header.Peek(security.SignatureHeader))
-	callerCredential, found := findCredential(config, credential)
-	if !found {
-		writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
-		return
-	}
-	err := h.verifier.Verify(
-		callerCredential.SecretKey,
-		credential,
-		string(c.Method()),
-		requestPath,
-		rawQuery,
-		body,
-		string(c.Request.Header.Peek(security.TimestampHeader)),
-		string(c.Request.Header.Peek(security.NonceHeader)),
-		string(c.Request.Header.Peek(security.PayloadHeader)),
-		signature,
-	)
-	if err != nil {
-		writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", err.Error())
+	identity, authenticated := h.authenticate(ctx, c, audience, config, requestPath, rawQuery, body)
+	if !authenticated {
 		return
 	}
 
-	routePath := strings.TrimPrefix(requestPath, "/api/"+serviceCode)
+	routePath := strings.TrimPrefix(requestPath, "/api/"+audience+"/"+serviceCode)
 	if routePath == "" {
 		routePath = "/"
 	}
@@ -102,17 +105,98 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 		writeError(c, http.StatusBadRequest, "INVALID_PATH", "请求路径无效")
 		return
 	}
-	matched, found := matchRoute(config, serviceCode, string(c.Method()), decodedRoutePath)
+	matched, found := matchRoute(config, audience, serviceCode, string(c.Method()), decodedRoutePath)
 	if !found {
 		writeError(c, http.StatusNotFound, "ROUTE_NOT_FOUND", "路由不存在")
 		return
 	}
-	if err := h.forward(ctx, c, matched, callerCredential.CallerServiceCode, body, rawQuery); err != nil {
+	if audience == "inner" && !routeAllowsService(matched.route, identity.serviceCode) {
+		writeError(c, http.StatusForbidden, "SERVICE_NOT_AUTHORIZED", "调用方服务未获该接口授权")
+		return
+	}
+	if err := h.forward(ctx, c, matched, identity, body, rawQuery); err != nil {
 		writeError(c, http.StatusBadGateway, "UPSTREAM_ERROR", "上游服务请求失败")
 	}
 }
 
-func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched routeMatch, callerServiceCode string, body []byte, rawQuery string) error {
+func (h *Handler) authenticate(ctx context.Context, c *app.RequestContext, audience string, config *model.RuntimeConfig, requestPath, rawQuery string, body []byte) (callerIdentity, bool) {
+	credential := string(c.Request.Header.Peek(security.CredentialHeader))
+	if audience == "inner" {
+		callerCredential, found := findCredential(config, credential)
+		if !found || h.verifyRequest(c, callerCredential.SecretKey, credential, requestPath, rawQuery, body) != nil {
+			writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
+			return callerIdentity{}, false
+		}
+		return callerIdentity{serviceCode: callerCredential.CallerServiceCode, authType: "service"}, true
+	}
+	if h.resolver == nil {
+		writeError(c, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "用户凭据服务暂不可用")
+		return callerIdentity{}, false
+	}
+	if credential != "" {
+		userCredential, err := h.resolver.Resolve(ctx, credential)
+		if errors.Is(err, signin.ErrProgrammingAccessDisabled) {
+			writeError(c, http.StatusForbidden, "PROGRAMMING_ACCESS_DISABLED", "账号尚未开启编程访问")
+			return callerIdentity{}, false
+		}
+		if errors.Is(err, signin.ErrUnauthorized) {
+			writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
+			return callerIdentity{}, false
+		}
+		if err != nil {
+			writeError(c, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "用户凭据服务暂不可用")
+			return callerIdentity{}, false
+		}
+		if h.verifyRequest(c, userCredential.SecretKey, credential, requestPath, rawQuery, body) != nil {
+			writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
+			return callerIdentity{}, false
+		}
+		return callerIdentity{userID: userCredential.AccountID, authType: "programmatic"}, true
+	}
+	sessionCookie := cloudSessionCookie(string(c.Request.Header.Peek("Cookie")))
+	if sessionCookie == "" {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "登录状态无效或已过期")
+		return callerIdentity{}, false
+	}
+	userCredential, err := h.resolver.Exchange(ctx, sessionCookie)
+	if errors.Is(err, signin.ErrUnauthorized) {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "登录状态无效或已过期")
+		return callerIdentity{}, false
+	}
+	if err != nil {
+		writeError(c, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "用户凭据服务暂不可用")
+		return callerIdentity{}, false
+	}
+	if userCredential.ExpiresAt == nil || !userCredential.ExpiresAt.After(time.Now().UTC()) || h.verifyTemporaryCredential(userCredential, string(c.Method()), requestPath, rawQuery, body) != nil {
+		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "临时访问凭据无效")
+		return callerIdentity{}, false
+	}
+	return callerIdentity{userID: userCredential.AccountID, authType: "session"}, true
+}
+
+func (h *Handler) verifyRequest(c *app.RequestContext, secretKey, credential, requestPath, rawQuery string, body []byte) error {
+	return h.verifier.Verify(secretKey, credential, string(c.Method()), requestPath, rawQuery, body,
+		string(c.Request.Header.Peek(security.TimestampHeader)), string(c.Request.Header.Peek(security.NonceHeader)),
+		string(c.Request.Header.Peek(security.PayloadHeader)), string(c.Request.Header.Peek(security.SignatureHeader)))
+}
+
+func (h *Handler) verifyTemporaryCredential(credential model.OpenCredential, method, path, rawQuery string, body []byte) error {
+	timestamp := fmt.Sprintf("%d", time.Now().UTC().Unix())
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return err
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	payloadHash := security.PayloadHash(body)
+	canonical, err := security.CanonicalRequest(method, path, rawQuery, timestamp, nonce, payloadHash)
+	if err != nil {
+		return err
+	}
+	return h.verifier.Verify(credential.SecretKey, credential.AccessKey, method, path, rawQuery, body,
+		timestamp, nonce, payloadHash, security.Sign(credential.SecretKey, canonical))
+}
+
+func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched routeMatch, identity callerIdentity, body []byte, rawQuery string) error {
 	target, err := buildTargetURL(matched.service.BaseURL, matched.route.UpstreamPath, matched.params, rawQuery)
 	if err != nil {
 		return err
@@ -128,13 +212,19 @@ func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched ro
 		return err
 	}
 	c.Request.Header.VisitAll(func(key, value []byte) {
-		if shouldForwardRequestHeader(string(key)) {
+		if shouldForwardRequestHeader(string(key)) && !(identity.userID != "" && isBrowserCredentialHeader(string(key))) {
 			request.Header.Add(string(key), string(value))
 		}
 	})
 	request.Header.Set("X-Forwarded-Host", string(c.Host()))
 	request.Header.Set("X-Forwarded-For", c.ClientIP())
-	request.Header.Set("X-Gateway-Caller-Service", callerServiceCode)
+	if identity.serviceCode != "" {
+		request.Header.Set("X-Gateway-Caller-Service", identity.serviceCode)
+	}
+	if identity.userID != "" {
+		request.Header.Set("X-Gateway-User-ID", identity.userID)
+	}
+	request.Header.Set("X-Gateway-Auth-Type", identity.authType)
 	request.Header.Set("X-Gateway-Service", matched.service.Code)
 	request.Header.Set("X-Gateway-Route", fmt.Sprintf("%d", matched.route.ID))
 
@@ -162,6 +252,22 @@ func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched ro
 	return nil
 }
 
+func cloudSessionCookie(rawCookie string) string {
+	if rawCookie == "" {
+		return ""
+	}
+	request := &http.Request{Header: http.Header{"Cookie": []string{rawCookie}}}
+	cookie, err := request.Cookie("CLOUD_SESSION")
+	if err != nil || cookie.Value == "" {
+		return ""
+	}
+	return cookie.String()
+}
+
+func isBrowserCredentialHeader(header string) bool {
+	return strings.EqualFold(header, "Cookie") || strings.EqualFold(header, "X-XSRF-TOKEN")
+}
+
 func findCredential(config *model.RuntimeConfig, accessKey string) (model.RuntimeCredential, bool) {
 	for _, credential := range config.Credentials {
 		if credential.AccessKey == accessKey {
@@ -171,7 +277,7 @@ func findCredential(config *model.RuntimeConfig, accessKey string) (model.Runtim
 	return model.RuntimeCredential{}, false
 }
 
-func matchRoute(config *model.RuntimeConfig, serviceCode, method, requestPath string) (routeMatch, bool) {
+func matchRoute(config *model.RuntimeConfig, audience, serviceCode, method, requestPath string) (routeMatch, bool) {
 	method = strings.ToUpper(method)
 	for _, service := range config.Services {
 		if service.Code != serviceCode {
@@ -180,6 +286,9 @@ func matchRoute(config *model.RuntimeConfig, serviceCode, method, requestPath st
 		var best routeMatch
 		found := false
 		for _, route := range service.Routes {
+			if route.Audience != audience {
+				continue
+			}
 			if !containsMethod(route.Methods, method) {
 				continue
 			}
@@ -192,6 +301,15 @@ func matchRoute(config *model.RuntimeConfig, serviceCode, method, requestPath st
 		return best, found
 	}
 	return routeMatch{}, false
+}
+
+func routeAllowsService(route model.RuntimeRoute, serviceCode string) bool {
+	for _, allowed := range route.AllowedCallerServiceCodes {
+		if allowed == serviceCode {
+			return true
+		}
+	}
+	return false
 }
 
 func matchPath(pattern, actual string) (map[string]string, bool) {
@@ -266,8 +384,11 @@ func shouldForwardRequestHeader(header string) bool {
 	if isHopByHopHeader(header) {
 		return false
 	}
+	if strings.HasPrefix(strings.ToLower(header), "x-gateway-") {
+		return false
+	}
 	switch strings.ToLower(header) {
-	case "host", strings.ToLower(security.CredentialHeader), strings.ToLower(security.SignatureHeader), strings.ToLower(security.TimestampHeader), strings.ToLower(security.NonceHeader), strings.ToLower(security.PayloadHeader):
+	case "host":
 		return false
 	default:
 		return true

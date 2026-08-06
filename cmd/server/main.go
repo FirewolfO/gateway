@@ -9,6 +9,7 @@ import (
 	gatewayhandler "gateway/internal/gateway"
 	"gateway/internal/runtime"
 	"gateway/internal/security"
+	"gateway/internal/signin"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 )
@@ -17,6 +18,9 @@ func main() {
 	cfg := config.Load()
 	if len(cfg.RuntimeToken) < 32 {
 		log.Fatal("GATEWAY_RUNTIME_TOKEN 至少需要 32 个字符")
+	}
+	if cfg.SigninAccessKey == "" || len(cfg.SigninSecretKey) < 32 {
+		log.Fatal("Gateway 调用 Sign-in 的 AK/SK 配置无效")
 	}
 	provider := runtime.NewProvider(cfg.AdminURL, cfg.RuntimeToken, cfg.ConfigRefreshInterval)
 	if err := refreshWithRetry(provider); err != nil {
@@ -28,9 +32,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化验签器失败: %v", err)
 	}
-	handler := gatewayhandler.New(provider, verifier)
+	signinClient := signin.NewClient(cfg.SigninInnerURL, cfg.SigninAccessKey, cfg.SigninSecretKey)
+	handler := gatewayhandler.New(provider, verifier, signinClient)
 	h := server.Default(server.WithHostPorts(cfg.Address))
-	h.Any("/api/:service/*path", handler.Serve)
+	h.Any("/api/:audience/:service/*path", handler.Serve)
 	log.Printf("Gateway 运行时监听于 %s", cfg.Address)
 	h.Spin()
 }

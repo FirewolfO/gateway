@@ -1,6 +1,6 @@
 # Gateway Runtime
 
-Gateway 运行时数据面，使用 Go 和 CloudWeGo Hertz 实现。它从 Gateway Admin 拉取已生效配置，对进入 `/api/{service}/{path}` 的请求完成 HMAC 验签、路由匹配和上游转发，不提供配置管理 API。
+Gateway 运行时数据面，使用 Go 和 CloudWeGo Hertz 实现。它从 Gateway Admin 拉取已生效配置，对进入 `/api/{audience}/{service}/{path}` 的请求完成身份认证、路由匹配和上游转发，不提供配置管理 API。
 
 ## 启动
 
@@ -9,23 +9,25 @@ cp .env.example .env
 go run ./cmd/server
 ```
 
+`GATEWAY_SIGNIN_ACCESS_KEY` 和 `GATEWAY_SIGNIN_SECRET_KEY` 必须配置为 Gateway 服务调用 Sign-in Inner 接口所用的服务 AK/SK；缺少时运行时会拒绝启动。
+
 默认监听 `:8082`，每 5 秒从 `http://127.0.0.1:8083/api/v1/runtime/config` 刷新配置。Gateway 通过 `GATEWAY_RUNTIME_TOKEN` 访问该接口，值必须与 Gateway Admin 保持一致。
 
 ## 请求格式
 
-外部请求必须使用以下路径：
+请求必须使用以下路径：
 
 ```text
-/api/{service}/{path}
+/api/{audience}/{service}/{path}
 ```
 
 例如服务编码为 `orders`，路由匹配路径为 `/orders/:id`，调用地址为：
 
 ```text
-GET /api/orders/orders/42
+GET /api/inner/orders/orders/42
 ```
 
-Gateway 使用匹配到的 `upstreamPath` 替换路径参数，保留原始查询参数，并将请求转发到服务的 `baseUrl`。
+`audience` 只能是 `inner` 或 `open`。Gateway 使用匹配到的同受众 `upstreamPath` 替换路径参数，保留原始查询参数，并将请求转发到服务的 `baseUrl`。
 
 ## 请求签名
 
@@ -39,7 +41,9 @@ X-Gateway-Nonce: <at_least_16_characters>
 X-Gateway-Content-SHA256: <lowercase_hex_sha256_of_body>
 ```
 
-`X-Gateway-Credential` 填调用方服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，成功后才检查目标服务路由。签名使用专用请求头，不占用标准 `Authorization`，因此业务认证信息可以继续转发到上游。规范请求由六行组成，末尾不附加换行：
+Inner 请求的 `X-Gateway-Credential` 填调用方服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，匹配路由后还会确认该调用方服务已获得接口授权。Open 编程请求使用用户 AK/SK；只有账号已开启“编程访问”时 Sign-in 才允许 Gateway 解析该 AK。浏览器 Open 请求不携带签名，Gateway 使用自身服务 AK/SK 调用 Sign-in Inner 接口，把 `CLOUD_SESSION` 换成短期 AK/SK 后完成同一签名校验。
+
+签名使用专用请求头，不占用标准 `Authorization`。规范请求由六行组成，末尾不附加换行：
 
 ```text
 HTTP_METHOD
@@ -56,7 +60,7 @@ LOWERCASE_SHA256_HEX_OF_BODY
 
 ```bash
 GATEWAY_ACCESS_KEY='gwak_...' GATEWAY_SECRET_KEY='gwsk_...' \
-go run ./cmd/sign -method GET -url 'http://localhost:8082/api/orders/orders/42?verbose=true'
+go run ./cmd/sign -method GET -url 'http://localhost:8082/api/inner/orders/orders/42?verbose=true'
 ```
 
 ## 验证

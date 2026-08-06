@@ -25,11 +25,20 @@ type RuntimeService struct {
 }
 
 type RuntimeRoute struct {
-	ID           uint     `json:"id"`
-	Name         string   `json:"name"`
-	Path         string   `json:"path"`
-	UpstreamPath string   `json:"upstreamPath"`
-	Methods      []string `json:"methods"`
-	Priority     int      `json:"priority"`
-	TimeoutMS    int      `json:"timeoutMs"`
+	ID                        uint     `json:"id"`
+	Name                      string   `json:"name"`
+	Path                      string   `json:"path"`
+	UpstreamPath              string   `json:"upstreamPath"`
+	Methods                   []string `json:"methods"`
+	Audience                  string   `json:"audience"`
+	AllowedCallerServiceCodes []string `json:"allowedCallerServiceCodes"`
+	Priority                  int      `json:"priority"`
+	TimeoutMS                 int      `json:"timeoutMs"`
+}
+
+type OpenCredential struct {
+	AccountID string     `json:"accountId"`
+	AccessKey string     `json:"accessKey"`
+	SecretKey string     `json:"secretKey"`
+	ExpiresAt *time.Time `json:"expiresAt"`
 }

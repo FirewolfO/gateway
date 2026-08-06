@@ -103,6 +103,15 @@ func validateConfig(config *model.RuntimeConfig) error {
 			if !strings.HasPrefix(route.Path, "/") || !strings.HasPrefix(route.UpstreamPath, "/") || len(route.Methods) == 0 {
 				return fmt.Errorf("runtime config contains invalid route %d", route.ID)
 			}
+			if route.Audience != "inner" && route.Audience != "open" {
+				return fmt.Errorf("runtime config contains invalid audience for route %d", route.ID)
+			}
+			if route.Audience == "inner" && len(route.AllowedCallerServiceCodes) == 0 {
+				return fmt.Errorf("runtime config contains an unauthorized inner route %d", route.ID)
+			}
+			if route.Audience == "open" && len(route.AllowedCallerServiceCodes) != 0 {
+				return fmt.Errorf("runtime config contains service grants on open route %d", route.ID)
+			}
 		}
 	}
 	seenCredentials := make(map[string]struct{}, len(config.Credentials))

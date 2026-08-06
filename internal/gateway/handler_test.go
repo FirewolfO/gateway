@@ -10,8 +10,9 @@ func TestMatchRouteByServiceMethodPathAndPriority(t *testing.T) {
 	config := &model.RuntimeConfig{Services: []model.RuntimeService{{
 		Code: "orders", BaseURL: "http://orders.internal", TimeoutMS: 5000,
 		Routes: []model.RuntimeRoute{
-			{ID: 1, Path: "/orders/:id", UpstreamPath: "/internal/orders/:id", Methods: []string{"GET"}, Priority: 100},
-			{ID: 2, Path: "/orders/special", UpstreamPath: "/internal/special", Methods: []string{"GET"}, Priority: 200},
+			{ID: 1, Path: "/orders/:id", UpstreamPath: "/internal/orders/:id", Methods: []string{"GET"}, Audience: "inner", AllowedCallerServiceCodes: []string{"billing"}, Priority: 100},
+			{ID: 2, Path: "/orders/special", UpstreamPath: "/internal/special", Methods: []string{"GET"}, Audience: "inner", AllowedCallerServiceCodes: []string{"billing"}, Priority: 200},
+			{ID: 3, Path: "/orders/:id", UpstreamPath: "/public/orders/:id", Methods: []string{"GET"}, Audience: "open", Priority: 100},
 		},
 	}}, Credentials: []model.RuntimeCredential{{
 		ID: 9, CallerServiceCode: "billing", AccessKey: "gwak_billing", SecretKey: "0123456789abcdef0123456789abcdef",
@@ -25,18 +26,25 @@ func TestMatchRouteByServiceMethodPathAndPriority(t *testing.T) {
 		t.Fatal("target service code unexpectedly matched an access key")
 	}
 
-	matched, ok := matchRoute(config, "orders", "GET", "/orders/special")
+	matched, ok := matchRoute(config, "inner", "orders", "GET", "/orders/special")
 	if !ok || matched.route.ID != 2 {
 		t.Fatalf("matchRoute() = %#v, %v", matched, ok)
 	}
-	matched, ok = matchRoute(config, "orders", "GET", "/orders/42")
+	matched, ok = matchRoute(config, "inner", "orders", "GET", "/orders/42")
 	if !ok || matched.params["id"] != "42" {
 		t.Fatalf("parameter match = %#v, %v", matched, ok)
 	}
-	if _, ok := matchRoute(config, "orders", "POST", "/orders/42"); ok {
+	if !routeAllowsService(matched.route, "billing") || routeAllowsService(matched.route, "catalog") {
+		t.Fatal("inner route service authorization was not enforced")
+	}
+	openMatched, ok := matchRoute(config, "open", "orders", "GET", "/orders/42")
+	if !ok || openMatched.route.ID != 3 {
+		t.Fatalf("open route isolation = %#v, %v", openMatched, ok)
+	}
+	if _, ok := matchRoute(config, "inner", "orders", "POST", "/orders/42"); ok {
 		t.Fatal("POST unexpectedly matched GET route")
 	}
-	if _, ok := matchRoute(config, "unknown", "GET", "/orders/42"); ok {
+	if _, ok := matchRoute(config, "inner", "unknown", "GET", "/orders/42"); ok {
 		t.Fatal("unknown service unexpectedly matched")
 	}
 }
@@ -64,5 +72,14 @@ func TestForwardedHeadersAndTraversalProtection(t *testing.T) {
 	}
 	if !containsTraversal("/files/../secret") || !containsTraversal("/files/./current") {
 		t.Fatal("path traversal segments were not detected")
+	}
+	if cloudSessionCookie("theme=dark; CLOUD_SESSION=session-value; other=value") != "CLOUD_SESSION=session-value" {
+		t.Fatal("cloud session cookie was not isolated")
+	}
+	if cloudSessionCookie("theme=dark") != "" {
+		t.Fatal("unrelated cookies were accepted as a cloud session")
+	}
+	if !isBrowserCredentialHeader("Cookie") || !isBrowserCredentialHeader("X-XSRF-TOKEN") {
+		t.Fatal("browser credentials were not marked for removal")
 	}
 }

@@ -13,6 +13,9 @@ type Config struct {
 	RuntimeToken          string
 	ConfigRefreshInterval time.Duration
 	SignatureSkew         time.Duration
+	SigninInnerURL        string
+	SigninAccessKey       string
+	SigninSecretKey       string
 }
 
 func Load() Config {
@@ -22,6 +25,9 @@ func Load() Config {
 		RuntimeToken:          env("GATEWAY_RUNTIME_TOKEN", "local-development-runtime-token-change-me"),
 		ConfigRefreshInterval: time.Duration(envInt("GATEWAY_CONFIG_REFRESH_SECONDS", 5)) * time.Second,
 		SignatureSkew:         time.Duration(envInt("GATEWAY_SIGNATURE_SKEW_SECONDS", 300)) * time.Second,
+		SigninInnerURL:        strings.TrimRight(env("SIGNIN_INNER_URL", "http://127.0.0.1:8084"), "/"),
+		SigninAccessKey:       env("GATEWAY_SIGNIN_ACCESS_KEY", ""),
+		SigninSecretKey:       env("GATEWAY_SIGNIN_SECRET_KEY", ""),
 	}
 }
 
