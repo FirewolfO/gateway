@@ -92,11 +92,6 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 		writeError(c, http.StatusServiceUnavailable, "CONFIG_UNAVAILABLE", "路由配置暂不可用")
 		return
 	}
-	identity, authenticated := h.authenticate(ctx, c, audience, config, requestPath, rawQuery, body)
-	if !authenticated {
-		return
-	}
-
 	routePath := strings.TrimPrefix(requestPath, "/api/"+audience+"/"+serviceCode)
 	if routePath == "" {
 		routePath = "/"
@@ -110,6 +105,28 @@ func (h *Handler) Serve(ctx context.Context, c *app.RequestContext) {
 	if !found {
 		writeError(c, http.StatusNotFound, "ROUTE_NOT_FOUND", "路由不存在")
 		return
+	}
+	var identity callerIdentity
+	if audience == "open" && matched.route.AnonymousAccessEnabled {
+		gatewayCredential, found := findCallerCredential(config, "gateway-runtime")
+		if !found {
+			writeError(c, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "Gateway 系统凭据暂不可用")
+			return
+		}
+		identity = callerIdentity{
+			serviceCode: gatewayCredential.CallerServiceCode,
+			authType:    "gateway",
+			credential: model.OpenCredential{
+				AccessKey: gatewayCredential.AccessKey,
+				SecretKey: gatewayCredential.SecretKey,
+			},
+		}
+	} else {
+		var authenticated bool
+		identity, authenticated = h.authenticate(ctx, c, audience, config, requestPath, rawQuery, body)
+		if !authenticated {
+			return
+		}
 	}
 	if audience == "inner" && !routeAllowsService(matched.route, identity.serviceCode) {
 		writeError(c, http.StatusForbidden, "SERVICE_NOT_AUTHORIZED", "调用方服务未获该接口授权")
@@ -228,7 +245,7 @@ func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched ro
 	}
 	c.Request.Header.VisitAll(func(key, value []byte) {
 		if shouldForwardRequestHeader(string(key)) &&
-			(!isBrowserCredentialHeader(string(key)) || identity.userID == "" || matched.route.ForwardBrowserCredentials) {
+			(!isBrowserCredentialHeader(string(key)) || identity.authType == "service" || matched.route.ForwardBrowserCredentials) {
 			request.Header.Add(string(key), string(value))
 		}
 	})
@@ -290,6 +307,15 @@ func isBrowserCredentialHeader(header string) bool {
 func findCredential(config *model.RuntimeConfig, accessKey string) (model.RuntimeCredential, bool) {
 	for _, credential := range config.Credentials {
 		if credential.AccessKey == accessKey {
+			return credential, true
+		}
+	}
+	return model.RuntimeCredential{}, false
+}
+
+func findCallerCredential(config *model.RuntimeConfig, serviceCode string) (model.RuntimeCredential, bool) {
+	for _, credential := range config.Credentials {
+		if credential.CallerServiceCode == serviceCode {
 			return credential, true
 		}
 	}

@@ -129,6 +129,12 @@ func validateConfig(config *model.RuntimeConfig) error {
 			if route.Audience == "inner" && route.ForwardBrowserCredentials {
 				return fmt.Errorf("runtime config forwards browser credentials on inner route %d", route.ID)
 			}
+			if route.Audience == "inner" && route.AnonymousAccessEnabled {
+				return fmt.Errorf("runtime config enables anonymous access on inner route %d", route.ID)
+			}
+			if route.AnonymousAccessEnabled && route.ProgrammingAccessEnabled {
+				return fmt.Errorf("runtime config enables anonymous and programmatic access on route %d", route.ID)
+			}
 		}
 	}
 	seenCredentials := make(map[string]struct{}, len(config.Credentials))

@@ -34,6 +34,7 @@ type RuntimeRoute struct {
 	Audience                  string   `json:"audience"`
 	ProgrammingAccessEnabled  bool     `json:"programmingAccessEnabled"`
 	ForwardBrowserCredentials bool     `json:"forwardBrowserCredentials"`
+	AnonymousAccessEnabled    bool     `json:"anonymousAccessEnabled"`
 	AllowedCallerServiceCodes []string `json:"allowedCallerServiceCodes"`
 	Priority                  int      `json:"priority"`
 	TimeoutMS                 int      `json:"timeoutMs"`

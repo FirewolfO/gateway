@@ -41,7 +41,7 @@ X-Gateway-Nonce: <at_least_16_characters>
 X-Gateway-Content-SHA256: <lowercase_hex_sha256_of_body>
 ```
 
-Inner 请求的 `X-Gateway-Credential` 填调用方 Inner 服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，匹配路由后还会确认该调用方服务已获得接口授权。Open 编程请求使用用户 AK/SK，只有匹配的 OpenAPI 路由已开启“编程访问”时才会放行；该开关默认关闭。浏览器 Open 请求不携带签名，不受编程访问开关影响，Gateway 使用自身服务 AK/SK 经过 Sign-in Inner 路由把 `CLOUD_SESSION` 换成短期 AK/SK。路由匹配后，Gateway 使用对应用户凭据对实际上游方法、路径、查询和请求体重新签名；除显式配置的退出路由外，不向上游转发浏览器 Cookie 或 CSRF 头。
+Inner 请求的 `X-Gateway-Credential` 填调用方 Inner 服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，匹配路由后还会确认该调用方服务已获得接口授权。Open 编程请求使用用户 AK/SK，只有匹配的 OpenAPI 路由已开启“编程访问”时才会放行；该开关默认关闭。普通浏览器 Open 请求不携带签名，不受编程访问开关影响，Gateway 使用自身服务 AK/SK 经过 Sign-in Inner 路由把 `CLOUD_SESSION` 换成短期 AK/SK。显式开启“匿名 Open 访问”的路由不要求云登录态，Gateway 直接使用自己的系统凭据签名上游；该能力只允许 Open 路由，用于 People 等独立登录系统。路由还可显式允许转发业务 Cookie 和 CSRF Header，供独立 Session 系统维持登录态，未开启时不会转发。
 
 签名使用专用请求头，不占用标准 `Authorization`。规范请求由六行组成，末尾不附加换行：
 
