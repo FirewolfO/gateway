@@ -1,9 +1,13 @@
 package gateway
 
 import (
+	"bytes"
+	"net/http"
 	"testing"
+	"time"
 
 	"gateway/internal/model"
+	"gateway/internal/security"
 )
 
 func TestMatchRouteByServiceMethodPathAndPriority(t *testing.T) {
@@ -85,5 +89,31 @@ func TestForwardedHeadersAndTraversalProtection(t *testing.T) {
 	}
 	if !isBrowserCredentialHeader("Cookie") || !isBrowserCredentialHeader("X-XSRF-TOKEN") {
 		t.Fatal("browser credentials were not marked for removal")
+	}
+}
+
+func TestSignUpstreamRequestSignsActualTarget(t *testing.T) {
+	body := []byte(`{"displayName":"Gateway User"}`)
+	request, err := http.NewRequest(http.MethodPut,
+		"http://signin.internal/api/v1/account/profile?z=1&a=x+y&a=0", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := model.OpenCredential{
+		AccessKey: "utak_gateway_test",
+		SecretKey: "0123456789abcdef0123456789abcdef",
+	}
+	if err := signUpstreamRequest(request, credential, body); err != nil {
+		t.Fatalf("signUpstreamRequest() error = %v", err)
+	}
+	verifier, err := security.NewVerifier(5 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.Verify(credential.SecretKey, credential.AccessKey, request.Method,
+		request.URL.EscapedPath(), request.URL.RawQuery, body,
+		request.Header.Get(security.TimestampHeader), request.Header.Get(security.NonceHeader),
+		request.Header.Get(security.PayloadHeader), request.Header.Get(security.SignatureHeader)); err != nil {
+		t.Fatalf("upstream signature verification error = %v", err)
 	}
 }

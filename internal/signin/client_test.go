@@ -28,7 +28,7 @@ func TestClientSignsResolveAndExchangeRequests(t *testing.T) {
 			request.Header.Get(security.SignatureHeader)); verifyErr != nil {
 			t.Fatalf("signed request verification failed: %v", verifyErr)
 		}
-		if request.URL.Path == "/api/v1/inner/credentials/exchange" && request.Header.Get("Cookie") != "CLOUD_SESSION=session" {
+		if request.URL.Path == "/api/inner/signin/credentials/exchange" && request.Header.Get("Cookie") != "CLOUD_SESSION=session" {
 			t.Fatalf("session cookie = %q", request.Header.Get("Cookie"))
 		}
 		w.Header().Set("Content-Type", "application/json")

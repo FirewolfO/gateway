@@ -9,7 +9,7 @@ cp .env.example .env
 go run ./cmd/server
 ```
 
-`GATEWAY_SIGNIN_ACCESS_KEY` 和 `GATEWAY_SIGNIN_SECRET_KEY` 必须配置为 Gateway 服务调用 Sign-in Inner 接口所用的服务 AK/SK；缺少时运行时会拒绝启动。
+`GATEWAY_SIGNIN_ACCESS_KEY` 和 `GATEWAY_SIGNIN_SECRET_KEY` 必须配置为 Gateway 服务调用 Sign-in Inner 接口所用的服务 AK/SK；缺少时运行时会拒绝启动。`SIGNIN_INNER_URL` 指向 Gateway 自身地址，凭据解析和 STS 交换必须经过已注册的 `/api/inner/signin/**` 路由，不能绕过 Inner 配置直连 Sign-in。
 
 默认监听 `:8082`，每 5 秒从 `http://127.0.0.1:8083/api/v1/runtime/config` 刷新配置。Gateway 通过 `GATEWAY_RUNTIME_TOKEN` 访问该接口，值必须与 Gateway Admin 保持一致。
 
@@ -41,7 +41,7 @@ X-Gateway-Nonce: <at_least_16_characters>
 X-Gateway-Content-SHA256: <lowercase_hex_sha256_of_body>
 ```
 
-Inner 请求的 `X-Gateway-Credential` 填调用方 Inner 服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，匹配路由后还会确认该调用方服务已获得接口授权。Open 编程请求使用用户 AK/SK，只有匹配的 OpenAPI 路由已开启“编程访问”时才会放行；该开关默认关闭。浏览器 Open 请求不携带签名，不受编程访问开关影响，Gateway 使用自身服务 AK/SK 调用 Sign-in Inner 接口，把 `CLOUD_SESSION` 换成短期 AK/SK 后完成同一签名校验。
+Inner 请求的 `X-Gateway-Credential` 填调用方 Inner 服务的 AK，路径中的 `{service}` 是目标服务编码，两者相互独立。Gateway 按 AK 取得对应 SK 完成验签，匹配路由后还会确认该调用方服务已获得接口授权。Open 编程请求使用用户 AK/SK，只有匹配的 OpenAPI 路由已开启“编程访问”时才会放行；该开关默认关闭。浏览器 Open 请求不携带签名，不受编程访问开关影响，Gateway 使用自身服务 AK/SK 经过 Sign-in Inner 路由把 `CLOUD_SESSION` 换成短期 AK/SK。路由匹配后，Gateway 使用对应用户凭据对实际上游方法、路径、查询和请求体重新签名；除显式配置的退出路由外，不向上游转发浏览器 Cookie 或 CSRF 头。
 
 签名使用专用请求头，不占用标准 `Authorization`。规范请求由六行组成，末尾不附加换行：
 

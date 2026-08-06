@@ -48,6 +48,7 @@ type callerIdentity struct {
 	serviceCode string
 	userID      string
 	authType    string
+	credential  model.OpenCredential
 }
 
 type errorResponse struct {
@@ -131,7 +132,14 @@ func (h *Handler) authenticate(ctx context.Context, c *app.RequestContext, audie
 			writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
 			return callerIdentity{}, false
 		}
-		return callerIdentity{serviceCode: callerCredential.CallerServiceCode, authType: "service"}, true
+		return callerIdentity{
+			serviceCode: callerCredential.CallerServiceCode,
+			authType:    "service",
+			credential: model.OpenCredential{
+				AccessKey: callerCredential.AccessKey,
+				SecretKey: callerCredential.SecretKey,
+			},
+		}, true
 	}
 	if h.resolver == nil {
 		writeError(c, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "用户凭据服务暂不可用")
@@ -151,7 +159,7 @@ func (h *Handler) authenticate(ctx context.Context, c *app.RequestContext, audie
 			writeError(c, http.StatusUnauthorized, "INVALID_SIGNATURE", "请求签名无效")
 			return callerIdentity{}, false
 		}
-		return callerIdentity{userID: userCredential.AccountID, authType: "programmatic"}, true
+		return callerIdentity{userID: userCredential.AccountID, authType: "programmatic", credential: userCredential}, true
 	}
 	sessionCookie := cloudSessionCookie(string(c.Request.Header.Peek("Cookie")))
 	if sessionCookie == "" {
@@ -167,11 +175,11 @@ func (h *Handler) authenticate(ctx context.Context, c *app.RequestContext, audie
 		writeError(c, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", "用户凭据服务暂不可用")
 		return callerIdentity{}, false
 	}
-	if userCredential.ExpiresAt == nil || !userCredential.ExpiresAt.After(time.Now().UTC()) || h.verifyTemporaryCredential(userCredential, string(c.Method()), requestPath, rawQuery, body) != nil {
+	if userCredential.ExpiresAt == nil || !userCredential.ExpiresAt.After(time.Now().UTC()) {
 		writeError(c, http.StatusUnauthorized, "UNAUTHORIZED", "临时访问凭据无效")
 		return callerIdentity{}, false
 	}
-	return callerIdentity{userID: userCredential.AccountID, authType: "session"}, true
+	return callerIdentity{userID: userCredential.AccountID, authType: "session", credential: userCredential}, true
 }
 
 func (h *Handler) verifyRequest(c *app.RequestContext, secretKey, credential, requestPath, rawQuery string, body []byte) error {
@@ -180,7 +188,10 @@ func (h *Handler) verifyRequest(c *app.RequestContext, secretKey, credential, re
 		string(c.Request.Header.Peek(security.PayloadHeader)), string(c.Request.Header.Peek(security.SignatureHeader)))
 }
 
-func (h *Handler) verifyTemporaryCredential(credential model.OpenCredential, method, path, rawQuery string, body []byte) error {
+func signUpstreamRequest(request *http.Request, credential model.OpenCredential, body []byte) error {
+	if credential.AccessKey == "" || len(credential.SecretKey) < 32 {
+		return errors.New("missing upstream signing credential")
+	}
 	timestamp := fmt.Sprintf("%d", time.Now().UTC().Unix())
 	nonceBytes := make([]byte, 16)
 	if _, err := rand.Read(nonceBytes); err != nil {
@@ -188,12 +199,16 @@ func (h *Handler) verifyTemporaryCredential(credential model.OpenCredential, met
 	}
 	nonce := hex.EncodeToString(nonceBytes)
 	payloadHash := security.PayloadHash(body)
-	canonical, err := security.CanonicalRequest(method, path, rawQuery, timestamp, nonce, payloadHash)
+	canonical, err := security.CanonicalRequest(request.Method, request.URL.EscapedPath(), request.URL.RawQuery, timestamp, nonce, payloadHash)
 	if err != nil {
 		return err
 	}
-	return h.verifier.Verify(credential.SecretKey, credential.AccessKey, method, path, rawQuery, body,
-		timestamp, nonce, payloadHash, security.Sign(credential.SecretKey, canonical))
+	request.Header.Set(security.CredentialHeader, credential.AccessKey)
+	request.Header.Set(security.TimestampHeader, timestamp)
+	request.Header.Set(security.NonceHeader, nonce)
+	request.Header.Set(security.PayloadHeader, payloadHash)
+	request.Header.Set(security.SignatureHeader, security.Sign(credential.SecretKey, canonical))
+	return nil
 }
 
 func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched routeMatch, identity callerIdentity, body []byte, rawQuery string) error {
@@ -212,7 +227,8 @@ func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched ro
 		return err
 	}
 	c.Request.Header.VisitAll(func(key, value []byte) {
-		if shouldForwardRequestHeader(string(key)) && !(identity.userID != "" && isBrowserCredentialHeader(string(key))) {
+		if shouldForwardRequestHeader(string(key)) &&
+			(!isBrowserCredentialHeader(string(key)) || identity.userID == "" || matched.route.ForwardBrowserCredentials) {
 			request.Header.Add(string(key), string(value))
 		}
 	})
@@ -227,6 +243,9 @@ func (h *Handler) forward(ctx context.Context, c *app.RequestContext, matched ro
 	request.Header.Set("X-Gateway-Auth-Type", identity.authType)
 	request.Header.Set("X-Gateway-Service", matched.service.Code)
 	request.Header.Set("X-Gateway-Route", fmt.Sprintf("%d", matched.route.ID))
+	if err := signUpstreamRequest(request, identity.credential, body); err != nil {
+		return err
+	}
 
 	response, err := h.client.Do(request)
 	if err != nil {

@@ -46,11 +46,11 @@ func (c *Client) Resolve(ctx context.Context, accessKey string) (model.OpenCrede
 	if err != nil {
 		return model.OpenCredential{}, err
 	}
-	return c.request(ctx, "/api/v1/inner/credentials/resolve", body, "")
+	return c.request(ctx, "/api/inner/signin/credentials/resolve", body, "")
 }
 
 func (c *Client) Exchange(ctx context.Context, cookie string) (model.OpenCredential, error) {
-	return c.request(ctx, "/api/v1/inner/credentials/exchange", []byte(`{}`), cookie)
+	return c.request(ctx, "/api/inner/signin/credentials/exchange", []byte(`{}`), cookie)
 }
 
 func (c *Client) request(ctx context.Context, path string, body []byte, cookie string) (model.OpenCredential, error) {

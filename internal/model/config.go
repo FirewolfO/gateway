@@ -33,6 +33,7 @@ type RuntimeRoute struct {
 	Methods                   []string `json:"methods"`
 	Audience                  string   `json:"audience"`
 	ProgrammingAccessEnabled  bool     `json:"programmingAccessEnabled"`
+	ForwardBrowserCredentials bool     `json:"forwardBrowserCredentials"`
 	AllowedCallerServiceCodes []string `json:"allowedCallerServiceCodes"`
 	Priority                  int      `json:"priority"`
 	TimeoutMS                 int      `json:"timeoutMs"`
